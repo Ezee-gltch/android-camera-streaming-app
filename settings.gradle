@@ -1,10 +1,3 @@
-// Build cache configuration for faster builds
-buildCache {
-    local {
-        enabled = true
-    }
-}
-
 // Plugin management: Configure repositories and plugin versions
 pluginManagement {
     repositories {
@@ -14,6 +7,13 @@ pluginManagement {
         google()
         // Central Maven repository for open-source libraries
         mavenCentral()
+    }
+    resolutionStrategy {
+        eachPlugin {
+            if (requested.id.id.startsWith("com.android.")) {
+                useModule("com.android.tools.build:gradle:${requested.version}")
+            }
+        }
     }
 }
 
@@ -25,11 +25,12 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
     }
-    // Version catalog reference for centralized dependency management
-    versionCatalogs {
-        libs {
-            from(files("gradle/libs.versions.toml"))
-        }
+}
+
+// Build cache configuration for faster builds
+buildCache {
+    local {
+        enabled = true
     }
 }
 
