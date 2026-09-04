@@ -1,16 +1,37 @@
-pluginManagement {
-    repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
+// Build cache configuration for faster builds
+buildCache {
+    local {
+        enabled = true
     }
 }
+
+// Plugin management: Configure repositories and plugin versions
+pluginManagement {
+    repositories {
+        // Gradle plugins repository (should be checked first)
+        gradlePluginPortal()
+        // Google Android Gradle plugins and Android-specific libraries
+        google()
+        // Central Maven repository for open-source libraries
+        mavenCentral()
+    }
+}
+
+// Dependency resolution management: Configure artifact repositories
 dependencyResolutionManagement {
+    // Fail if project defines repositories (enforces single source of truth)
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
         mavenCentral()
     }
+    // Version catalog reference for centralized dependency management
+    versionCatalogs {
+        libs {
+            from(files("gradle/libs.versions.toml"))
+        }
+    }
 }
+
 rootProject.name = "CameraStreamingApp"
 include ':app'
