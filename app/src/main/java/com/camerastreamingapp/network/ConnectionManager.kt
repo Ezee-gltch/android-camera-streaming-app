@@ -49,7 +49,7 @@ class ConnectionManager(
         coroutineScope.launch {
             updateStatus(ConnectionStatus.CONNECTING, "")
             
-            if (connectToCamer()) {
+            if (connectToCamera()) {
                 failureCount = 0
                 updateStatus(ConnectionStatus.CONNECTED, "")
                 _isConnected.value = true
@@ -79,7 +79,7 @@ class ConnectionManager(
     /**
      * Attempt actual connection to camera
      */
-    private suspend fun connectToCamer(): Boolean {
+    private suspend fun connectToCamera(): Boolean {
         return try {
             rtspReader = RTSPStreamReader(rtspUrl)
             rtspReader?.connect() == true

@@ -194,7 +194,7 @@ class RTSPStreamReader(
      * Parse RTSP URL into components
      */
     private fun parseRtspUrl(url: String): Triple<String, Int, String> {
-        val rtspRegex = """rtsp://(?:([^:@]+):([^@]+)@)?([^:/]+)(?::(\d+))?(/.*)?""".toRegex()
+        val rtspRegex = """rtsp://(?:([^:@]+):([^@]+)@)?([^:/]+)(?::(\d+))?(/.*)?""" .toRegex()
         val matchResult = rtspRegex.find(url) ?: throw IllegalArgumentException("Invalid RTSP URL")
 
         val host = matchResult.groupValues[3]

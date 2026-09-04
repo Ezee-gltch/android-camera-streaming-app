@@ -233,10 +233,7 @@ class CloudRelayConnection(
             connection.setRequestProperty("Authorization", "Bearer $authToken")
             connection.setRequestProperty("Content-Type", "application/json")
 
-            val requestBody = """{
-                "cameraId": "$cameraId",
-                "rtspUrl": "$cameraRtspUrl"
-            }""".toByteArray()
+            val requestBody = """{"cameraId": "$cameraId", "rtspUrl": "$cameraRtspUrl"}""" .toByteArray()
 
             connection.outputStream.write(requestBody)
             connection.outputStream.flush()
