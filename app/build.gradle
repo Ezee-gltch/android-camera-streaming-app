@@ -33,16 +33,31 @@ android {
     }
     buildFeatures {
         viewBinding true
+        compose true
+    }
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.8"
     }
 }
 
 dependencies {
     // Core Android & AndroidX
+    implementation libs.androidx.core.ktx
     implementation libs.bundles.androidx.core
     implementation libs.google.material
 
     // Lifecycle & ViewModel
     implementation libs.bundles.androidx.lifecycle
+    implementation 'androidx.lifecycle:lifecycle-livedata-ktx:2.6.1'
+
+    // Jetpack Compose
+    implementation 'androidx.compose.ui:ui:1.6.0'
+    implementation 'androidx.compose.material3:material3:1.1.2'
+    implementation 'androidx.compose.ui:ui-graphics:1.6.0'
+    implementation 'androidx.compose.ui:ui-tooling-preview:1.6.0'
+    implementation 'androidx.activity:activity-compose:1.8.1'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2'
+    debugImplementation 'androidx.compose.ui:ui-tooling:1.6.0'
 
     // ExoPlayer
     implementation 'com.google.android.exoplayer:exoplayer-core:2.19.1'
@@ -72,6 +87,9 @@ dependencies {
 
     // Media3/ExoPlayer MediaSession
     implementation 'androidx.media3:media3-session:1.1.1'
+
+    // Network Discovery (mDNS/Bonjour)
+    implementation 'javax.jmdns:jmdns:3.5.8'
 
     // Testing
     testImplementation libs.bundles.testing
