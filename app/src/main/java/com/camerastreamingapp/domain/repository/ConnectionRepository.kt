@@ -6,6 +6,8 @@ import com.camerastreamingapp.data.db.entities.ConnectionEntity
 import com.camerastreamingapp.domain.connection.ConnectionManager
 import com.camerastreamingapp.domain.connection.ConnectionState
 import com.camerastreamingapp.domain.model.ConnectionConfig
+import com.camerastreamingapp.domain.model.toConnectionConfig
+import com.camerastreamingapp.domain.model.toPersistedJson
 import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.ConcurrentHashMap
 
@@ -20,16 +22,33 @@ class ConnectionRepository(
 
     suspend fun setConnectionConfig(cameraId: Long, config: ConnectionConfig) {
         connectionConfigs[cameraId] = config
-        connectionDao.insert(
+        val type = config.toConnectionType()
+        val configJson = config.toPersistedJson()
+        val updated = connectionDao.updateByCameraId(
+            cameraId = cameraId,
+            connectionType = type,
+            status = "DISCONNECTED",
+            timestamp = System.currentTimeMillis(),
+            failureCount = 0,
+            nextRetryTime = null,
+            configJson = configJson,
+            errorMessage = null
+        )
+        if (updated == 0) connectionDao.insert(
             ConnectionEntity(
                 cameraId = cameraId,
-                connectionType = config.toConnectionType(),
-                status = "DISCONNECTED"
+                connectionType = type,
+                status = "DISCONNECTED",
+                configJson = configJson,
+                errorMessage = null
             )
         )
     }
 
-    suspend fun getConnectionConfig(cameraId: Long): ConnectionConfig? = connectionConfigs[cameraId]
+    suspend fun getConnectionConfig(cameraId: Long): ConnectionConfig? {
+        return connectionConfigs[cameraId]
+            ?: connectionDao.getByCameraIdOnce(cameraId)?.configJson?.toConnectionConfig()
+    }
 
     fun getAllConnectionStates(): LiveData<Map<Long, ConnectionState>> =
         connectionManager.connectionStatesLiveData

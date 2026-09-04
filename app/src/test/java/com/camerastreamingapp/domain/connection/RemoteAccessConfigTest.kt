@@ -21,6 +21,9 @@ class RemoteAccessConfigTest {
     @Test
     fun `cloud relay config requires http url and api key`() {
         assertTrue(RemoteAccessConfig.cloudRelay("https://relay.example.com", "key").isValid())
+        assertTrue(RemoteAccessConfig.cloudRelay("http://relay.example.com", "key").isValid())
         assertFalse(RemoteAccessConfig.cloudRelay("relay.example.com", "key").isValid())
+        assertFalse(RemoteAccessConfig.cloudRelay("httpbad", "key").isValid())
+        assertFalse(RemoteAccessConfig.cloudRelay("https://relay.example.com", "").isValid())
     }
 }

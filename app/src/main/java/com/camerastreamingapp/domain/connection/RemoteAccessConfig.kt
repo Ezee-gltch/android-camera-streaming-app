@@ -25,7 +25,10 @@ sealed class RemoteAccessConfig {
         val relayServerUrl: String,
         val apiKey: String
     ) : RemoteAccessConfig() {
-        override fun isValid(): Boolean = relayServerUrl.startsWith("http") && apiKey.isNotBlank()
+        override fun isValid(): Boolean {
+            val uri = runCatching { java.net.URI(relayServerUrl) }.getOrNull() ?: return false
+            return (uri.scheme == "http" || uri.scheme == "https") && !uri.host.isNullOrBlank() && apiKey.isNotBlank()
+        }
     }
 
     companion object {

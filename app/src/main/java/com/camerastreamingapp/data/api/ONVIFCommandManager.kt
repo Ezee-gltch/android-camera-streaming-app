@@ -31,6 +31,11 @@ class ONVIFCommandManager(
     private val service: OnvifService
 
     init {
+        val normalizedBaseUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+        val parsed = runCatching { java.net.URI(normalizedBaseUrl) }.getOrNull()
+        require(parsed != null && (parsed.scheme == "http" || parsed.scheme == "https") && !parsed.host.isNullOrBlank()) {
+            "baseUrl must be an absolute http(s) URL"
+        }
         val clientBuilder = OkHttpClient.Builder()
         if (!username.isNullOrBlank() && !password.isNullOrBlank()) {
             val auth = Credentials.basic(username, password)
@@ -40,7 +45,7 @@ class ONVIFCommandManager(
         }
 
         service = Retrofit.Builder()
-            .baseUrl(baseUrl)
+            .baseUrl(normalizedBaseUrl)
             .client(clientBuilder.build())
             .build()
             .create(OnvifService::class.java)
@@ -70,7 +75,7 @@ class ONVIFCommandManager(
             "http://www.onvif.org/ver20/ptz/wsdl/GotoHomePosition",
             """
                 <tptz:GotoHomePosition>
-                  <tptz:ProfileToken>$profileToken</tptz:ProfileToken>
+                  <tptz:ProfileToken>${profileToken.xmlEscaped()}</tptz:ProfileToken>
                 </tptz:GotoHomePosition>
             """.trimIndent()
         )
@@ -81,8 +86,8 @@ class ONVIFCommandManager(
             "http://www.onvif.org/ver20/ptz/wsdl/GotoPreset",
             """
                 <tptz:GotoPreset>
-                  <tptz:ProfileToken>$profileToken</tptz:ProfileToken>
-                  <tptz:PresetToken>$presetToken</tptz:PresetToken>
+                  <tptz:ProfileToken>${profileToken.xmlEscaped()}</tptz:ProfileToken>
+                  <tptz:PresetToken>${presetToken.xmlEscaped()}</tptz:PresetToken>
                 </tptz:GotoPreset>
             """.trimIndent()
         )
@@ -96,7 +101,7 @@ class ONVIFCommandManager(
     ): Result<String> {
         val body = """
             <tptz:ContinuousMove>
-              <tptz:ProfileToken>$profileToken</tptz:ProfileToken>
+              <tptz:ProfileToken>${profileToken.xmlEscaped()}</tptz:ProfileToken>
               <tptz:Velocity>
                 <tt:PanTilt x="$pan" y="$tilt" />
                 <tt:Zoom x="$zoom" />
@@ -107,6 +112,11 @@ class ONVIFCommandManager(
     }
 
     private suspend fun sendSoap(endpoint: String, action: String, innerBody: String): Result<String> {
+        val endpointUri = runCatching { java.net.URI(endpoint) }.getOrNull()
+        if (endpointUri == null || (endpointUri.scheme != "http" && endpointUri.scheme != "https") || endpointUri.host.isNullOrBlank()) {
+            return Result.failure(IllegalArgumentException("endpoint must be an absolute http(s) URL"))
+        }
+
         val envelope = """
             <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
                 xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl"
@@ -120,10 +130,22 @@ class ONVIFCommandManager(
         return runCatching {
             val requestBody = envelope.toRequestBody("application/soap+xml; charset=utf-8".toMediaType())
             val response = service.sendCommand(endpoint, requestBody, action)
+            val body = response.body()
             if (!response.isSuccessful) {
+                response.errorBody()?.close()
+                body?.close()
                 throw IllegalStateException("ONVIF command failed: ${response.code()}")
             }
-            response.body()?.string().orEmpty()
+            body?.use { it.string() }.orEmpty()
         }
+    }
+
+    private fun String.xmlEscaped(): String {
+        return this
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
+            .replace("'", "&apos;")
     }
 }

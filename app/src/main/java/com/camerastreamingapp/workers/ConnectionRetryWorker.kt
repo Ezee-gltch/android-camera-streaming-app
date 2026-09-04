@@ -21,10 +21,13 @@ class ConnectionRetryWorker(
             context = applicationContext
         )
 
-        database.connectionDao().findDisconnectedConnections().forEach { connection ->
-            manager.attemptReconnect(connection.cameraId)
+        var hasFailure = false
+        database.connectionDao().findDisconnectedConnections(System.currentTimeMillis()).forEach { connection ->
+            if (!manager.attemptReconnectOnce(connection.cameraId)) {
+                hasFailure = true
+            }
         }
 
-        return Result.success()
+        return if (hasFailure) Result.retry() else Result.success()
     }
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.Uri
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import com.camerastreamingapp.config.AppConfig
@@ -12,6 +13,8 @@ import com.camerastreamingapp.data.db.daos.CameraDao
 import com.camerastreamingapp.data.db.daos.ConnectionDao
 import com.camerastreamingapp.data.db.entities.ConnectionEntity
 import com.camerastreamingapp.domain.model.ConnectionConfig
+import com.camerastreamingapp.domain.model.toConnectionConfig
+import com.camerastreamingapp.domain.model.toPersistedJson
 import com.camerastreamingapp.util.CameraLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,9 +25,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collectLatest
-import java.net.SocketTimeoutException
+import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 class ConnectionManager(
@@ -62,32 +64,7 @@ class ConnectionManager(
     fun connectToCamera(cameraId: Long, config: ConnectionConfig): StateFlow<ConnectionState> {
         connectionConfigs[cameraId] = config
         val flow = stateFlows.getOrPut(cameraId) { MutableStateFlow(ConnectionState.Idle()) }
-
-        scope.launch {
-            emitState(cameraId, ConnectionState.Connecting())
-            val camera = cameraDao.getCameraById(cameraId)
-            if (camera == null) {
-                emitState(cameraId, ConnectionState.Failed("Camera not found", retryCounts[cameraId] ?: 0))
-                return@launch
-            }
-
-            val rtspUrl = buildRtspUrl(cameraId, camera.ipAddress, camera.port, camera.username, camera.password, config)
-            val connected = runCatching { cameraStreamManager.play(cameraId, rtspUrl) }
-                .getOrElse {
-                    CameraLogger.error("Failed stream startup for camera $cameraId", it)
-                    false
-                }
-
-            if (connected) {
-                retryCounts[cameraId] = 0
-                val now = System.currentTimeMillis()
-                emitState(cameraId, ConnectionState.Connected(now))
-                persistStatus(cameraId, config, "CONNECTED", 0, null, now)
-            } else {
-                onConnectionFailure(cameraId, config, "Unable to start stream")
-            }
-        }
-
+        scope.launch { connectInternal(cameraId, config) }
         return flow.asStateFlow()
     }
 
@@ -96,7 +73,7 @@ class ConnectionManager(
         scope.launch {
             cameraStreamManager.stop(cameraId)
             emitState(cameraId, ConnectionState.Disconnected())
-            persistStatus(cameraId, connectionConfigs[cameraId], "DISCONNECTED", 0, null, System.currentTimeMillis())
+            persistStatus(cameraId, connectionConfigs[cameraId], "DISCONNECTED", 0, null, System.currentTimeMillis(), null)
         }
     }
 
@@ -122,9 +99,9 @@ class ConnectionManager(
         networkCallback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 CameraLogger.network("Network available")
-                retryCounts.clear()
                 stateFlows.forEach { (cameraId, stateFlow) ->
-                    if (stateFlow.value is ConnectionState.Failed || stateFlow.value is ConnectionState.Disconnected) {
+                    val hasRunningRetry = retryJobs[cameraId]?.isActive == true
+                    if (!hasRunningRetry && (stateFlow.value is ConnectionState.Failed || stateFlow.value is ConnectionState.Reconnecting)) {
                         attemptReconnect(cameraId)
                     }
                 }
@@ -139,32 +116,38 @@ class ConnectionManager(
     }
 
     fun attemptReconnect(cameraId: Long) {
-        val config = connectionConfigs[cameraId] ?: ConnectionConfig.LocalNetwork
         retryJobs.remove(cameraId)?.cancel()
         retryJobs[cameraId] = scope.launch {
+            val config = resolveConfig(cameraId)
             val retryCount = retryCounts[cameraId] ?: 0
             if (retryCount >= AppConfig.MAX_RETRY_ATTEMPTS) {
                 emitState(cameraId, ConnectionState.Failed("Max retry attempts reached", retryCount))
-                persistStatus(cameraId, config, "FAILED", retryCount, null, System.currentTimeMillis())
+                persistStatus(
+                    cameraId,
+                    config,
+                    "FAILED",
+                    retryCount,
+                    null,
+                    System.currentTimeMillis(),
+                    "Max retry attempts reached"
+                )
                 return@launch
             }
 
-            val delayMs = backoffDelays.getOrElse(retryCount) { AppConfig.MAX_BACKOFF_MS }
+            val retryAttempt = retryCount.coerceAtLeast(1)
+            val delayMs = backoffDelays.getOrElse(retryAttempt - 1) { AppConfig.MAX_BACKOFF_MS }
             val nextRetryAt = System.currentTimeMillis() + delayMs
-            emitState(cameraId, ConnectionState.Reconnecting(retryCount + 1, nextRetryAt))
-            persistStatus(cameraId, config, "RECONNECTING", retryCount + 1, nextRetryAt, System.currentTimeMillis())
+            emitState(cameraId, ConnectionState.Reconnecting(retryAttempt, nextRetryAt))
+            persistStatus(cameraId, config, "RECONNECTING", retryAttempt, nextRetryAt, System.currentTimeMillis(), null)
             delay(delayMs)
 
-            try {
-                connectToCamera(cameraId, config)
-            } catch (timeout: SocketTimeoutException) {
-                onConnectionFailure(cameraId, config, "Connection timeout")
-            } catch (security: SecurityException) {
-                onConnectionFailure(cameraId, config, "Authentication failed")
-            } catch (throwable: Throwable) {
-                onConnectionFailure(cameraId, config, throwable.message ?: "Unknown stream error")
-            }
+            connectInternal(cameraId, config, scheduleRetryOnFailure = true)
         }
+    }
+
+    suspend fun attemptReconnectOnce(cameraId: Long): Boolean {
+        val config = resolveConfig(cameraId)
+        return connectInternal(cameraId, config, scheduleRetryOnFailure = false)
     }
 
     fun stopAutoReconnect() {
@@ -186,9 +169,72 @@ class ConnectionManager(
     private suspend fun onConnectionFailure(cameraId: Long, config: ConnectionConfig, reason: String) {
         val retryCount = (retryCounts[cameraId] ?: 0) + 1
         retryCounts[cameraId] = retryCount
+        val delayMs = backoffDelays.getOrElse(retryCount - 1) { AppConfig.MAX_BACKOFF_MS }
+        val nextRetryAt = System.currentTimeMillis() + delayMs
         emitState(cameraId, ConnectionState.Failed(reason, retryCount))
-        persistStatus(cameraId, config, "FAILED", retryCount, null, System.currentTimeMillis())
+        persistStatus(cameraId, config, "FAILED", retryCount, nextRetryAt, System.currentTimeMillis(), reason)
         attemptReconnect(cameraId)
+    }
+
+    private suspend fun connectInternal(
+        cameraId: Long,
+        config: ConnectionConfig,
+        scheduleRetryOnFailure: Boolean = true
+    ): Boolean {
+        emitState(cameraId, ConnectionState.Connecting())
+        val camera = cameraDao.getCameraById(cameraId)
+        if (camera == null) {
+            val retryCount = retryCounts[cameraId] ?: 0
+            emitState(cameraId, ConnectionState.Failed("Camera not found", retryCount))
+            persistStatus(cameraId, config, "FAILED", retryCount, null, System.currentTimeMillis(), "Camera not found")
+            retryJobs.remove(cameraId)?.cancel()
+            retryCounts.remove(cameraId)
+            connectionConfigs.remove(cameraId)
+            connectionDao.deleteByCameraId(cameraId)
+            return false
+        }
+
+        val rtspUrl = buildRtspUrl(
+            cameraId = cameraId,
+            persistedRtspUrl = camera.rtspUrl,
+            ipAddress = camera.ipAddress,
+            port = camera.port,
+            username = camera.username,
+            password = camera.password,
+            config = config
+        )
+
+        val connected = runCatching { cameraStreamManager.play(cameraId, rtspUrl) }
+            .getOrElse { throwable ->
+                CameraLogger.error("Failed stream startup for camera $cameraId", throwable)
+                false
+            }
+
+        return if (connected) {
+            retryCounts[cameraId] = 0
+            val now = System.currentTimeMillis()
+            emitState(cameraId, ConnectionState.Connected(now))
+            persistStatus(cameraId, config, "CONNECTED", 0, null, now, null)
+            true
+        } else {
+            if (scheduleRetryOnFailure) {
+                onConnectionFailure(cameraId, config, "Unable to start stream")
+            } else {
+                val retryCount = (retryCounts[cameraId] ?: 0) + 1
+                retryCounts[cameraId] = retryCount
+                emitState(cameraId, ConnectionState.Failed("Unable to start stream", retryCount))
+                persistStatus(
+                    cameraId,
+                    config,
+                    "FAILED",
+                    retryCount,
+                    null,
+                    System.currentTimeMillis(),
+                    "Unable to start stream"
+                )
+            }
+            false
+        }
     }
 
     private suspend fun emitState(cameraId: Long, state: ConnectionState) {
@@ -204,7 +250,8 @@ class ConnectionManager(
         status: String,
         failureCount: Int,
         nextRetryTime: Long?,
-        timestamp: Long
+        timestamp: Long,
+        errorMessage: String?
     ) {
         val connectionType = when (config) {
             is ConnectionConfig.PortForward -> "PORT_FORWARD"
@@ -213,16 +260,32 @@ class ConnectionManager(
             else -> "LOCAL"
         }
 
-        connectionDao.insert(
-            ConnectionEntity(
-                cameraId = cameraId,
-                connectionType = connectionType,
-                status = status,
-                lastStatusChange = timestamp,
-                failureCount = failureCount,
-                nextRetryTime = nextRetryTime
-            )
+        val configJson = config?.toPersistedJson()
+        val updated = connectionDao.updateByCameraId(
+            cameraId = cameraId,
+            connectionType = connectionType,
+            status = status,
+            timestamp = timestamp,
+            failureCount = failureCount,
+            nextRetryTime = nextRetryTime,
+            configJson = configJson,
+            errorMessage = errorMessage
         )
+
+        if (updated == 0) {
+            connectionDao.insert(
+                ConnectionEntity(
+                    cameraId = cameraId,
+                    connectionType = connectionType,
+                    status = status,
+                    lastStatusChange = timestamp,
+                    failureCount = failureCount,
+                    nextRetryTime = nextRetryTime,
+                    configJson = configJson,
+                    errorMessage = errorMessage
+                )
+            )
+        }
     }
 
     private fun ConnectionEntity.toDomainState(): ConnectionState = when (status) {
@@ -233,33 +296,51 @@ class ConnectionManager(
             nextRetryAt = nextRetryTime ?: lastStatusChange,
             timestamp = lastStatusChange
         )
+
         "FAILED" -> ConnectionState.Failed(
-            errorMessage = "Last failure recorded",
+            errorMessage = errorMessage ?: "Last failure recorded",
             retryCount = failureCount,
             timestamp = lastStatusChange
         )
+
         else -> ConnectionState.Disconnected(lastStatusChange)
     }
 
     private fun buildRtspUrl(
         cameraId: Long,
+        persistedRtspUrl: String,
         ipAddress: String,
         port: Int,
         username: String?,
         password: String?,
         config: ConnectionConfig
     ): String {
-        val credentials = if (!username.isNullOrBlank() && !password.isNullOrBlank()) {
-            "${username}:${password}@"
+        val encodedCredentials = if (!username.isNullOrBlank() && !password.isNullOrBlank()) {
+            "${Uri.encode(username)}:${Uri.encode(password)}@"
         } else {
             ""
         }
 
         return when (config) {
-            is ConnectionConfig.LocalNetwork -> "rtsp://$credentials$ipAddress:$port/stream"
-            is ConnectionConfig.PortForward -> "rtsp://$credentials${config.routerIp}:${config.forwardedPort}/stream"
-            is ConnectionConfig.VpnConfig -> "rtsp://$credentials$ipAddress:$port/stream"
-            is ConnectionConfig.CloudRelayConfig -> "${config.relayServerUrl.trimEnd('/')}/cameras/$cameraId/stream"
+            is ConnectionConfig.LocalNetwork ->
+                persistedRtspUrl.takeIf { it.isNotBlank() }
+                    ?: "rtsp://$encodedCredentials$ipAddress:$port/stream"
+
+            is ConnectionConfig.PortForward ->
+                "rtsp://$encodedCredentials${config.routerIp}:${config.forwardedPort}/stream"
+
+            is ConnectionConfig.VpnConfig ->
+                persistedRtspUrl.takeIf { it.isNotBlank() }
+                    ?: "rtsp://$encodedCredentials$ipAddress:$port/stream"
+
+            is ConnectionConfig.CloudRelayConfig ->
+                "${config.relayServerUrl.trimEnd('/')}/cameras/$cameraId/stream"
         }
+    }
+
+    private suspend fun resolveConfig(cameraId: Long): ConnectionConfig {
+        return connectionConfigs[cameraId]
+            ?: connectionDao.getByCameraIdOnce(cameraId)?.configJson?.toConnectionConfig()
+            ?: ConnectionConfig.LocalNetwork
     }
 }

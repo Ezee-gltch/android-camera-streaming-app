@@ -3,7 +3,9 @@ package com.camerastreamingapp.data.security
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import com.camerastreamingapp.util.CameraLogger
 import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -17,19 +19,24 @@ class CredentialEncryptor {
     fun encrypt(plainText: String): String? = runCatching {
         val cipher = Cipher.getInstance(transformation)
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
-        val encrypted = cipher.doFinal(plainText.toByteArray())
+        val encrypted = cipher.doFinal(plainText.toByteArray(StandardCharsets.UTF_8))
         val payload = ByteBuffer.allocate(4 + cipher.iv.size + encrypted.size)
             .putInt(cipher.iv.size)
             .put(cipher.iv)
             .put(encrypted)
             .array()
         Base64.encodeToString(payload, Base64.NO_WRAP)
+    }.onFailure {
+        CameraLogger.error("Credential encryption failed", it)
     }.getOrNull()
 
     fun decrypt(cipherText: String): String? = runCatching {
         val payload = Base64.decode(cipherText, Base64.NO_WRAP)
+        require(payload.size > 4) { "Invalid encrypted payload" }
         val buffer = ByteBuffer.wrap(payload)
         val ivSize = buffer.int
+        require(ivSize == 12) { "Invalid IV size" }
+        require(payload.size > 4 + ivSize) { "Invalid encrypted payload length" }
         val iv = ByteArray(ivSize)
         buffer.get(iv)
         val encrypted = ByteArray(buffer.remaining())
@@ -37,7 +44,9 @@ class CredentialEncryptor {
 
         val cipher = Cipher.getInstance(transformation)
         cipher.init(Cipher.DECRYPT_MODE, getOrCreateSecretKey(), GCMParameterSpec(128, iv))
-        String(cipher.doFinal(encrypted))
+        String(cipher.doFinal(encrypted), StandardCharsets.UTF_8)
+    }.onFailure {
+        CameraLogger.error("Credential decryption failed", it)
     }.getOrNull()
 
     private fun getOrCreateSecretKey(): SecretKey {

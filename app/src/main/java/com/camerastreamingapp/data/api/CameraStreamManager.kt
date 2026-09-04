@@ -9,7 +9,11 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import com.camerastreamingapp.config.AppConfig
 import com.camerastreamingapp.util.CameraLogger
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
 import java.util.concurrent.ConcurrentHashMap
 
 class CameraStreamManager(private val context: Context) {
@@ -34,7 +38,7 @@ class CameraStreamManager(private val context: Context) {
         path: String = "/stream"
     ): String {
         val credentials = if (!username.isNullOrBlank() && !password.isNullOrBlank()) {
-            "${username}:${password}@"
+            "${Uri.encode(username)}:${Uri.encode(password)}@"
         } else {
             ""
         }
@@ -42,16 +46,20 @@ class CameraStreamManager(private val context: Context) {
     }
 
     suspend fun play(cameraId: Long, rtspUrl: String): Boolean {
-        return runCatching {
+        val connected = runCatching {
             val player = players[cameraId] ?: createPlayer(cameraId)
             player.setMediaItem(MediaItem.fromUri(Uri.parse(rtspUrl)))
-            player.prepare()
             player.playWhenReady = true
-            true
+            player.prepare()
+            awaitReadyOrError(cameraId, player)
         }.onFailure {
             CameraLogger.error("Failed to start stream for camera $cameraId", it)
             updateState(cameraId, StreamState(error = it.message ?: "Unknown stream error"))
         }.getOrDefault(false)
+        if (!connected) {
+            stop(cameraId)
+        }
+        return connected
     }
 
     fun pause(cameraId: Long) {
@@ -60,7 +68,10 @@ class CameraStreamManager(private val context: Context) {
     }
 
     suspend fun stop(cameraId: Long) {
-        players[cameraId]?.stop()
+        players.remove(cameraId)?.let { player ->
+            player.stop()
+            player.release()
+        }
         updateState(cameraId, StreamState(isPlaying = false))
     }
 
@@ -105,5 +116,35 @@ class CameraStreamManager(private val context: Context) {
         val map = streamStates.value.orEmpty().toMutableMap()
         map[cameraId] = state
         streamStates.postValue(map)
+    }
+
+    private suspend fun awaitReadyOrError(cameraId: Long, player: ExoPlayer): Boolean {
+        if (player.playbackState == Player.STATE_READY) {
+            updateState(cameraId, StreamState(isPlaying = true))
+            return true
+        }
+        return withTimeoutOrNull(AppConfig.CONNECTION_TIMEOUT_MS.toLong()) {
+            suspendCancellableCoroutine { continuation ->
+                val listener = object : Player.Listener {
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        if (playbackState == Player.STATE_READY && continuation.isActive) {
+                            updateState(cameraId, StreamState(isPlaying = true))
+                            player.removeListener(this)
+                            continuation.resume(true)
+                        }
+                    }
+
+                    override fun onPlayerError(error: PlaybackException) {
+                        if (continuation.isActive) {
+                            updateState(cameraId, StreamState(error = error.localizedMessage ?: "Playback error"))
+                            player.removeListener(this)
+                            continuation.resume(false)
+                        }
+                    }
+                }
+                player.addListener(listener)
+                continuation.invokeOnCancellation { player.removeListener(listener) }
+            }
+        } ?: false
     }
 }

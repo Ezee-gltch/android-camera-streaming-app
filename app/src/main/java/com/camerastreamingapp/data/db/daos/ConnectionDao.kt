@@ -22,23 +22,32 @@ interface ConnectionDao {
     @Query("SELECT * FROM connections WHERE cameraId = :cameraId")
     fun getByCameraId(cameraId: Long): Flow<ConnectionEntity?>
 
+    @Query("SELECT * FROM connections WHERE cameraId = :cameraId")
+    suspend fun getByCameraIdOnce(cameraId: Long): ConnectionEntity?
+
     @Query("SELECT * FROM connections")
     fun getAllConnections(): Flow<List<ConnectionEntity>>
 
-    @Query("SELECT * FROM connections WHERE status IN ('DISCONNECTED', 'FAILED')")
-    suspend fun findDisconnectedConnections(): List<ConnectionEntity>
+    @Query("SELECT * FROM connections WHERE status IN ('FAILED', 'RECONNECTING') AND (nextRetryTime IS NULL OR nextRetryTime <= :currentTime)")
+    suspend fun findDisconnectedConnections(currentTime: Long): List<ConnectionEntity>
 
     @Query(
-        "UPDATE connections SET status = :status, lastStatusChange = :timestamp, failureCount = :failureCount, nextRetryTime = :nextRetryTime WHERE cameraId = :cameraId"
+        "UPDATE connections SET connectionType = :connectionType, status = :status, lastStatusChange = :timestamp, failureCount = :failureCount, nextRetryTime = :nextRetryTime, configJson = :configJson, errorMessage = :errorMessage WHERE cameraId = :cameraId"
     )
-    suspend fun updateStatusByCameraId(
+    suspend fun updateByCameraId(
         cameraId: Long,
+        connectionType: String,
         status: String,
         timestamp: Long,
         failureCount: Int,
-        nextRetryTime: Long?
-    )
+        nextRetryTime: Long?,
+        configJson: String?,
+        errorMessage: String?
+    ): Int
 
     @Query("DELETE FROM connections WHERE connectionId = :connectionId")
     suspend fun deleteById(connectionId: Long)
+
+    @Query("DELETE FROM connections WHERE cameraId = :cameraId")
+    suspend fun deleteByCameraId(cameraId: Long)
 }

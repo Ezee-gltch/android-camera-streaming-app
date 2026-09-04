@@ -5,18 +5,26 @@ import com.camerastreamingapp.data.db.daos.ConnectionDao
 import com.camerastreamingapp.data.db.entities.CameraEntity
 import com.camerastreamingapp.data.db.entities.ConnectionEntity
 import com.camerastreamingapp.domain.model.CameraModel
+import com.camerastreamingapp.domain.model.ConnectionState
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 
 class CameraRepository(
     private val cameraDao: CameraDao,
     private val connectionDao: ConnectionDao
 ) {
-    fun getAllCameras(): Flow<List<CameraModel>> = cameraDao.getAllCameras().map { entities ->
-        entities.map { it.toModel() }
-    }
+    fun getAllCameras(): Flow<List<CameraModel>> =
+        combine(cameraDao.getAllCameras(), connectionDao.getAllConnections()) { cameras, connections ->
+            val connectionMap = connections.associateBy { it.cameraId }
+            cameras.map { camera -> camera.toModel(connectionMap[camera.cameraId]) }
+        }
 
-    suspend fun getCameraById(id: Long): CameraModel? = cameraDao.getCameraById(id)?.toModel()
+    suspend fun getCameraById(id: Long): CameraModel? {
+        val camera = cameraDao.getCameraById(id) ?: return null
+        val connection = connectionDao.getByCameraIdOnce(id)
+        return camera.toModel(connection)
+    }
 
     suspend fun addCamera(camera: CameraModel): Long = cameraDao.insert(camera.toEntity())
 
@@ -31,7 +39,7 @@ class CameraRepository(
     fun getCameraConnections(): Flow<Map<Long, ConnectionEntity>> =
         connectionDao.getAllConnections().map { list -> list.associateBy { it.cameraId } }
 
-    private fun CameraEntity.toModel(): CameraModel = CameraModel(
+    private fun CameraEntity.toModel(connection: ConnectionEntity?): CameraModel = CameraModel(
         cameraId = cameraId,
         name = name,
         ipAddress = ipAddress,
@@ -41,7 +49,8 @@ class CameraRepository(
         isActive = isActive,
         lastConnected = lastConnected,
         username = username,
-        password = password
+        password = password,
+        connectionState = connection.toConnectionState()
     )
 
     private fun CameraModel.toEntity(): CameraEntity = CameraEntity(
@@ -56,4 +65,13 @@ class CameraRepository(
         isActive = isActive,
         lastConnected = lastConnected
     )
+
+    private fun ConnectionEntity?.toConnectionState(): ConnectionState = when (this?.status) {
+        "CONNECTED" -> ConnectionState.Connected
+        "CONNECTING" -> ConnectionState.Connecting
+        "RECONNECTING" -> ConnectionState.Reconnecting
+        "FAILED" -> ConnectionState.Failed(this.errorMessage ?: "Connection failed", this.failureCount)
+        "DISCONNECTED" -> ConnectionState.Disconnected
+        else -> ConnectionState.Idle
+    }
 }

@@ -25,5 +25,7 @@ data class ConnectionEntity(
     val status: String,
     val lastStatusChange: Long = System.currentTimeMillis(),
     val failureCount: Int = 0,
-    val nextRetryTime: Long? = null
+    val nextRetryTime: Long? = null,
+    val configJson: String? = null,
+    val errorMessage: String? = null
 )

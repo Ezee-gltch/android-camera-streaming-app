@@ -15,18 +15,19 @@ class CameraDiscoveryManager {
     suspend fun discoverDevices(): List<DiscoveredDevice> = withContext(Dispatchers.IO) {
         val devices = linkedSetOf<DiscoveredDevice>()
         val candidatePorts = listOf(554, 8554, 80)
-        val prefixes = listOf("192.168", "10")
+        val subnets = listOf(
+            intArrayOf(192, 168, 0),
+            intArrayOf(192, 168, 1),
+            intArrayOf(10, 0, 0)
+        )
 
-        prefixes.forEach { prefix ->
-            val secondOctetRange = if (prefix == "192.168") 0..1 else 0..0
-            for (second in secondOctetRange) {
-                for (host in 1..30) {
-                    val ip = if (prefix == "192.168") "$prefix.$second.$host" else "$prefix.$second.0.$host"
-                    for (port in candidatePorts) {
-                        if (isPortOpen(ip, port)) {
-                            devices.add(DiscoveredDevice("Camera $ip", ip, port))
-                            break
-                        }
+        subnets.forEach { subnet ->
+            for (host in 1..30) {
+                val ip = "${subnet[0]}.${subnet[1]}.${subnet[2]}.$host"
+                for (port in candidatePorts) {
+                    if (isPortOpen(ip, port)) {
+                        devices.add(DiscoveredDevice("Camera $ip", ip, port))
+                        break
                     }
                 }
             }
