@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace 'com.camerastreamingapp'
-    compileSdk 33
+    compileSdk libs.versions.compileSdk.get().toInteger()
 
     defaultConfig {
         applicationId "com.camerastreamingapp"
-        minSdk 24
-        targetSdk 33
+        minSdk libs.versions.minSdk.get().toInteger()
+        targetSdk libs.versions.targetSdk.get().toInteger()
         versionCode 1
         versionName "1.0.0"
 
@@ -37,16 +37,12 @@ android {
 }
 
 dependencies {
-    // Core Android
-    implementation 'androidx.core:core-ktx:1.10.1'
-    implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation 'com.google.android.material:material:1.9.0'
-    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    // Core Android & AndroidX
+    implementation libs.bundles.androidx.core
+    implementation libs.google.material
 
     // Lifecycle & ViewModel
-    implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.1'
-    implementation 'androidx.lifecycle:lifecycle-livedata-ktx:2.6.1'
-    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.1'
+    implementation libs.bundles.androidx.lifecycle
 
     // ExoPlayer
     implementation 'com.google.android.exoplayer:exoplayer-core:2.19.1'
@@ -56,18 +52,14 @@ dependencies {
     implementation 'com.google.android.exoplayer:exoplayer-hls:2.19.1'
 
     // Networking
-    implementation 'com.squareup.okhttp3:okhttp:4.11.0'
-    implementation 'com.squareup.retrofit2:retrofit:2.9.0'
-    implementation 'com.squareup.retrofit2:converter-gson:2.9.0'
+    implementation libs.bundles.networking
 
     // Coroutines
-    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.1'
-    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.1'
+    implementation libs.bundles.coroutines
 
     // Room Database
-    implementation 'androidx.room:room-runtime:2.5.2'
-    implementation 'androidx.room:room-ktx:2.5.2'
-    kapt 'androidx.room:room-compiler:2.5.2'
+    implementation libs.bundles.androidx.room
+    kapt libs.androidx.room.compiler
 
     // WorkManager
     implementation 'androidx.work:work-runtime-ktx:2.8.1'
@@ -82,7 +74,7 @@ dependencies {
     implementation 'androidx.media3:media3-session:1.1.1'
 
     // Testing
-    testImplementation 'junit:junit:4.13.2'
-    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
-    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+    testImplementation libs.bundles.testing
+    androidTestImplementation libs.androidx.junit
+    androidTestImplementation libs.androidx.espresso
 }
