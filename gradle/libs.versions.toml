@@ -29,7 +29,7 @@ retrofit = "2.10.0"
 okhttp = "4.11.0"
 
 # Media3
-androidx-media3 = "1.1.1"
+androidx-media3 = "1.4.1"
 
 # Coroutines
 kotlinx-coroutines = "1.7.3"
