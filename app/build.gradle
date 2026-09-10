@@ -62,6 +62,7 @@ dependencies {
     // Media3 / RTSP playback
     implementation 'androidx.media3:media3-exoplayer:1.1.1'
     implementation 'androidx.media3:media3-exoplayer-rtsp:1.1.1'
+    implementation 'androidx.media3:media3-ui:1.1.1'
 
     // Networking
     implementation libs.bundles.networking
